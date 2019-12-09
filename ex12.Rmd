@@ -1,0 +1,185 @@
+---
+title: "Exercise 12"
+author: "Helene"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    theme: united
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set()
+```
+
+```{r print_solutions, include = FALSE}
+# To show solutions
+print_solutions <- FALSE
+```
+
+    
+ First I load the code as stated in the task: 
+```{r, message=FALSE, warning=FALSE}
+library(SingleCellExperiment)
+library(ExperimentHub)
+library(scater)
+set.seed(42)
+eh <- ExperimentHub()
+sce <- eh[["EH1532"]]
+rownames(sce) <- paste0(rowData(sce)$id, "_", rowData(sce)$symbol)
+sce
+```
+
+Task 1
+
+I first create the ExperimentHub eh, which has 2770 entries. Then I filter for Bodenmiller and get a Hub with 20 entries. I can then see, that "Bodenmiller_BCR_XL_flowSet" has id EH2255 and load that.
+
+```{r, message= FALSE, warning=FALSE}
+(mito <- grep("MT-", rownames(sce), value = TRUE))
+sce <- addPerCellQC(sce, subsets = list(Mt = mito))
+sce <- addPerFeatureQC(sce)
+
+phenoid <- table(sce$phenoid)
+phenoid
+
+colData(sce)
+```
+There are 499 b-cells, 600 Monocytes, 400 t-helper cells, 600 natural killer cells, 500 memory t-cells, 398 naive-cytotoxic-cells, 499 naive t-cells and 498 regulatory t-cells. 
+
+
+
+```{r, message= FALSE, warning=FALSE}
+plotColData(sce, x = "sum", y="detected", colour_by="phenoid") 
+plotColData(sce, x = "subsets_Mt_sum", y="subsets_Mt_detected", colour_by="phenoid") 
+plotColData(sce, x = "sum", y="subsets_Mt_sum", colour_by="phenoid") 
+```
+
+Now we filter useful cells. 
+
+```{r, message=FALSE, warning=FALSE}
+
+
+keep.total <- isOutlier(sce$sum, type="lower", log=TRUE)
+filtered <- sce[,keep.total]
+dim(filtered)
+
+plotHighestExprs(sce, exprs_values = "counts")
+
+```
+
+
+Task 2
+
+ Identify “features of interest”, which usually means highly variable genes. There are various ways to do this (e.g., Seurat’s FindVariableFeatures or scran’s modelGeneVar). Select features in at least two ways (say, 1000-2000 genes) and make an upset plot to compare the lists.
+
+```{r, message=FALSE, eval=FALSE}
+
+BiocManager::install("scran")
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+
+library(dplyr)
+library(Seurat)
+library(scran)
+library(UpSetR)
+
+seurat <- as.Seurat(sce)
+
+seurat <- NormalizeData(seurat)
+
+features <- FindVariableFeatures(seurat, selection.method = "vst", nfeatures = 2000)
+  VariableFeaturePlot(features)
+  
+  head <- head(VariableFeatures(features), 2000)
+  
+ other_features <- modelGeneVar(sce, subset.fit=1:1000)
+ other_head <- getTopHVGs(other_features, n=2000)
+ 
+ plot(other_features$mean, other_features$total)
+curve(metadata(other_features)$trend(x), add=TRUE, col="dodgerblue")
+points(metadata(other_features)$mean, metadata(other_features)$var, col="red", pch=16)
+
+
+
+list <- list(head, other_head)
+
+
+
+```
+
+
+Task 3
+
+Re-calculate the low dimensional projection using your preferred set of selected features and produce some visualizations. For example, after re-running PCA, use the scater package to run the UMAP algorithm. Make multiple plots of the UMAP coordinates according to cell type (this is known in advance for this dataset), depth of sequencing and anything else you might find appropriate.
+
+```{r, message= FALSE, warnings=features}
+
+pca_sce <- runPCA(sce, name="PCA2",
+    subset_row= rownames(head))
+str(reducedDim(pca_sce, "PCA2"))
+
+umap_sce <- runUMAP(sce, subset_row = rownames(head))
+head(reducedDim(umap_sce, "UMAP"))
+
+
+plotReducedDim(umap_sce, dimred = "UMAP", colour_by = "phenoid")
+plotPCA(pca_sce, colour_by="phenoid")
+
+plotReducedDim(umap_sce, dimred = "UMAP", colour_by = "detected")
+plotReducedDim(umap_sce, dimred = "UMAP", colour_by = "sum")
+plotReducedDim(umap_sce, dimred = "UMAP", colour_by = "subsets_Mt_detected")
+  
+plotReducedDim(umap_sce, dimred = "UMAP", colour_by = "subsets_Mt_sum")
+
+
+```
+
+
+Task 4
+
+  Run at least 2 algorithms to cluster the data and make some comparisons. One should be graph-based clustering as this seems to perform well, generally speaking. Calculate the F1 score for each cell type (solve_LSAP in the clue package may be useful for matching of clusters to true populations) and the adjusted rand index (adjustedRandIndex in the mclust package, for example) for an overall score. What cell types are more difficult to separate with clustering? Run one of the algorithms at different numbers of clusters and plot a curve of the performance (e.g., adjusted rand index) as a function of the number of clusters.
+  
+```{r, message = FALSE, warning= FALSE}
+  g <- buildSNNGraph(umap_sce, use.dimred="UMAP",)
+  walktrap <-igraph::cluster_walktrap(g) 
+  cluster <- walktrap$membership
+  
+  umap_sce$cluster <- factor(cluster)
+  table(umap_sce$cluster)
+  plotUMAP(umap_sce, colour_by = "cluster")
+  
+  ratio <- clusterModularity(g, cluster, as.ratio=TRUE)
+
+library(pheatmap)
+pheatmap(log10(ratio+1), cluster_cols=FALSE, cluster_rows=FALSE,
+    col=rev(heat.colors(100)))
+
+hcluster <- as.hclust(walktrap)
+
+# vary number of clusters
+
+cut_100 <-cutree(hcluster, k= 100)
+cut_200 <- cutree(hcluster, k= 200)
+
+cut_height <- cutree(hcluster, h= 30)
+
+plot(cut_100)
+plot(cut_200)
+plot(cut_height)
+
+plot(x = cut_height, labels =  row.names(cut_height), cex = 0.5)
+
+dend <- as.dendrogram(hcluster)
+library(ape)
+# plot basic tree
+plot(as.phylo(hcluster), cex = 0.9, label.offset = 1)
+
+plot(dend)
+
+# library(mclust)
+# adjustedRandIndex(rownames(umap_sce$cluster), umap_sce$cluster)
+```
+  
